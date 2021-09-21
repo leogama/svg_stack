@@ -758,6 +758,9 @@ stdout.
     parser.add_option("-d","--direction",type='str',
                       default='vertical',
                       help='horizontal or vertical (or h or v)')
+    parser.add_option("-a","--alignment",type='str',
+                      default='center',
+                      help='vertical or horizontal alignment (top, bottom, left or right)')
     parser.add_option("-r","--remove-background",action='store_true',
                       default=False,
                       help='try to remove the original solid backgrounds')
@@ -772,7 +775,19 @@ stdout.
     elif options.direction.lower().startswith('h'):
         direction = 'horizontal'
     else:
-        raise ValueError('unknown direction %s'%options.direction)
+        raise ValueError('unknown direction %s' % options.direction)
+
+    alignment_map = {
+        'c': AlignCenter,
+        'l': AlignLeft,
+        'r': AlignRight,
+        't': AlignTop,
+        'b': AlignBottom,
+    }
+    try:
+        alignment = alignment_map[options.alignment[0].lower()]
+    except (IndexError, KeyError):
+        raise ValueError('unknown alignment %s' % options.alignment)
 
     if options.margin is not None:
         margin_px = convert_to_pixels(*get_unit_attr(options.margin))
@@ -791,7 +806,7 @@ stdout.
         layout = HBoxLayout()
 
     for fname in fnames:
-        layout.addSVG(fname, alignment=AlignCenter)
+        layout.addSVG(fname, alignment=alignment)
 
     layout.setSpacing(margin_px)
     doc.setLayout(layout)
