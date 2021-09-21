@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python3
 
 ## Copyright (c) 2009 Andrew D. Straw
 
@@ -47,6 +47,12 @@ PT2PX = 1.25
 PX2PT = 1.0/1.25
 
 relIRI_re = re.compile(r'url\(#(.*)\)')
+
+# https://developer.mozilla.org/en-US/docs/Web/SVG/Element#renderable_elements
+RENDERABLE_ELEMENT_TAGS = [
+        'a', 'circle', 'ellipse', 'foreignObject', 'image', 'line', 'mesh', 'path', 'polygon',
+        'polyline', 'rect', 'svg', 'switch', 'symbol', 'text', 'textPath', 'tspan', 'use'] # 'g'
+RENDERABLE_ELEMENTS = frozenset('{http://www.w3.org/2000/svg}' + tag for tag in RENDERABLE_ELEMENT_TAGS)
 
 def get_unit_attr(value):
     """ coordinate handling from http://www.w3.org/TR/SVG11/coords.html#Units
@@ -169,7 +175,7 @@ class Document(object):
     def setLayout(self,layout):
         self._layout = layout
 
-    def save(self, fileobj, debug_boxes=False, **kwargs):
+    def save(self, fileobj, remove_background=False, set_background=None, debug_boxes=False, **kwargs):
         if self._layout is None:
             raise ValueError('No layout, cannot save.')
         accum = LayoutAccumulator(**kwargs)
@@ -184,7 +190,7 @@ class Document(object):
         else:
             fd = open(fileobj, mode='w')
             close = True
-        buf = accum.tostring(pretty_print=True)
+        buf = accum.tostring(remove_background, set_background, pretty_print=True)
 
         fd.write(header_str)
         fd.write( buf.decode() )
@@ -280,14 +286,14 @@ class LayoutAccumulator(object):
     def add_raw_element(self,elem):
         self._raw_elements.append( elem )
 
-    def tostring(self, **kwargs):
-        root = self._make_finalized_root()
+    def tostring(self, remove_background=False, set_background=None, **kwargs):
+        root = self._make_finalized_root(remove_background, set_background)
         return etree.tostring(root, **kwargs)
 
     def _set_size(self, size):
         self._size = size
 
-    def _make_finalized_root(self):
+    def _make_finalized_root(self, remove_background, set_background):
         # get all required namespaces and prefixes
         NSMAP = {None : 'http://www.w3.org/2000/svg',
                  'sodipodi':'http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd',
@@ -308,12 +314,20 @@ class LayoutAccumulator(object):
 
         root = etree.Element('{http://www.w3.org/2000/svg}svg',
                              nsmap=NSMAP)
+        root.attrib['version']='1.1'
 
         if 1:
             # inkscape hack
             root_defs = etree.SubElement(root,'{http://www.w3.org/2000/svg}defs')
 
-        root.attrib['version']='1.1'
+        if set_background is not None:
+            background = etree.SubElement(root, '{http://www.w3.org/2000/svg}rect')
+            background.attrib.update({
+                'width': "100%",
+                'height': "100%",
+                'fill': set_background,
+            })
+
         fname_num = 0
         do_layout = True
         work_list=[]
@@ -356,6 +370,19 @@ class LayoutAccumulator(object):
                 elem.append(child)
 
             fix_ids( elem, fix_id_prefix )
+
+            if remove_background:
+                try:
+                    bg_elem = next(child for child in elem.iter() if child.tag in RENDERABLE_ELEMENTS)
+                    log.debug("Checking if {} is the background of {}".format(bg_elem, svgfile))
+                except StopIteration:
+                    pass
+                if bg_elem.tag == '{http://www.w3.org/2000/svg}rect' and 'fill' in bg_elem.attrib:
+                    bg_elem.getparent().remove(bg_elem)
+                elif bg_elem.tag == '{http://www.w3.org/2000/svg}polygon' and 'fill' in bg_elem.attrib:
+                    points = bg_elem.get('points', '').split()
+                    if len(points) == 4 or (len(points) == 5 and points[0] == points[4]):
+                        bg_elem.getparent().remove(bg_elem)
 
             translate_x = svgfile._coord[0]
             translate_y = svgfile._coord[1]
@@ -725,12 +752,18 @@ stdout.
 '''
 
     parser = OptionParser(usage, version=VERSION)
-    parser.add_option("--margin",type='str',
+    parser.add_option("-m","--margin",type='str',
                       help='size of margin (in any units, px default)',
                       default=None)
-    parser.add_option("--direction",type='str',
+    parser.add_option("-d","--direction",type='str',
                       default='vertical',
                       help='horizontal or vertical (or h or v)')
+    parser.add_option("-r","--remove-background",action='store_true',
+                      default=False,
+                      help='try to remove the original solid backgrounds')
+    parser.add_option("-b","--set-background",type='str',
+                      metavar='SVG_COLOR',
+                      help='add a solid background to the new SVG file')
     (options, args) = parser.parse_args()
     fnames = args
 
@@ -762,7 +795,7 @@ stdout.
 
     layout.setSpacing(margin_px)
     doc.setLayout(layout)
-    doc.save( fd )
+    doc.save(fd, options.remove_background, options.set_background)
 
 if __name__=='__main__':
     main()
